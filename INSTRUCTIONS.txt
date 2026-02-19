@@ -1,0 +1,89 @@
+============================================================
+  Nitor Trading Competition — How to Run
+============================================================
+
+PREREQUISITES
+─────────────
+  Python 3.9+
+  pip install -r requirements.txt
+
+DATA
+────
+  Place these files in the project root:
+    - train.csv
+    - test_for_participants.csv
+
+
+RUNNING THE MODELS
+──────────────────
+
+1. SVM Pipeline (SGD SVR + SVR RBF)
+   ─────────────────────────────────
+   python3 run_pipeline.py
+
+   - Loads & imputes data
+   - Engineers 27 features (temporal, squared, interactions)
+   - Runs Random Forest feature importance
+   - Trains SGD SVR (default + tuned) and SVR RBF
+   - Compares models on validation set
+   - Saves best submission → submissions/svm_submission.csv
+
+   Runtime: ~15 minutes (SVR RBF is slow on 119k rows)
+
+
+2. VARX / ARX Pipeline (per-market Ridge with AR lags)
+   ────────────────────────────────────────────────────
+   python3 run_varx_pipeline.py
+
+   - Loads & imputes data
+   - Runs stationarity checks (ADF test)
+   - Engineers AR features (lags 1–168h, rolling stats)
+   - Trains per-market Ridge ARX models
+   - Saves submission → submissions/varx_submission.csv
+
+   Runtime: ~30 seconds
+
+
+3. Ensemble (combines SVM + VARX)
+   ───────────────────────────────
+   python3 run_ensemble.py
+
+   - Requires svm_submission.csv and varx_submission.csv
+   - Generates simple average and weighted average ensembles
+   - Saves → submissions/ensemble_avg_submission.csv
+              submissions/ensemble_weighted_submission.csv
+
+   Runtime: instant
+
+
+4. EDA / Exploration Plots
+   ───────────────────────
+   python3 notebooks/01_exploration.py
+
+   - Generates 7 plots in notebooks/ directory
+   - Target distribution, time series, market boxplots,
+     hourly/monthly patterns, correlation heatmap, scatter plots
+
+   Runtime: ~30 seconds
+
+
+SUBMISSION FILES
+────────────────
+  All outputs go to the submissions/ folder:
+
+  File                              Description
+  ─────────────────────────────────────────────────────────
+  svm_submission.csv                SGD SVR (Val MAE=17.03)
+  varx_submission.csv               Per-market ARX (Val MAE=13.24) ← RECOMMENDED
+  ensemble_avg_submission.csv       Simple average of SVM + VARX
+  ensemble_weighted_submission.csv  Weighted average (VARX-heavy)
+
+  Each file has exactly 13,098 rows with columns: id, target
+
+
+RECOMMENDED SUBMISSION
+──────────────────────
+  varx_submission.csv
+
+  The ARX model outperforms SVM by ~28% on MAE and achieves
+  R² = 0.69 vs 0.06 for SVM on the validation set.
