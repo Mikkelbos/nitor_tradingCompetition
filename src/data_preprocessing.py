@@ -116,22 +116,6 @@ def scale_features(train_df: pd.DataFrame,
     return scaler, train_df, val_df, test_df
 
 
-# ── Train / validation split (temporal) ──────────────────────────────────────
-
-def temporal_split(df: pd.DataFrame,
-                   val_months: int = 3) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Split *train.csv* into train/validation by cutting the last `val_months`
-    months as validation, respecting temporal ordering.
-    Only rows with non-null target are included.
-    """
-    df = df.dropna(subset=[TARGET]).copy()
-    cutoff = df[DELIVERY_START].max() - pd.DateOffset(months=val_months)
-    train = df[df[DELIVERY_START] < cutoff].reset_index(drop=True)
-    val = df[df[DELIVERY_START] >= cutoff].reset_index(drop=True)
-    return train, val
-
-
 # ── Market encoding ──────────────────────────────────────────────────────────
 
 def encode_market(df: pd.DataFrame, method: str = "onehot") -> pd.DataFrame:
@@ -161,12 +145,8 @@ if __name__ == "__main__":
     print(f"  train nulls remaining: {train[NUMERIC_FEATURES].isnull().sum().sum()}")
     print(f"  test  nulls remaining: {test[NUMERIC_FEATURES].isnull().sum().sum()}")
 
-    print("Temporal split …")
-    tr, val = temporal_split(train, val_months=3)
-    print(f"  train: {tr.shape}  |  val: {val.shape}")
-
     print("Scaling …")
-    scaler, tr_s, val_s, test_s = scale_features(tr, val, test)
+    scaler, tr_s, _, test_s = scale_features(train, None, test)
     print(f"  scaled train: {tr_s.shape}")
 
     print("Market encoding …")

@@ -58,10 +58,29 @@ def evaluate_by_market(df: pd.DataFrame,
 def create_submission(test_df: pd.DataFrame,
                       predictions: np.ndarray,
                       path: str = "submissions/submission.csv"):
-    """Create and validate a submission CSV."""
+    """Create and validate a submission CSV based on test_for_participants.csv IDs."""
+    
+    actual_rows = len(predictions)
+    expected_rows = 13098
+    
+    # Let the user know if there is a discrepancy in rows versus the accepted number of rows
+    if expected_rows != actual_rows:
+        print(f"❌ ERROR: Shape mismatch! Your prediction data has {actual_rows} rows vs the expected {expected_rows} rows.")
+    
+    # Use IDs directly from the test dataframe
     sub = pd.DataFrame({"id": test_df["id"], "target": predictions})
-    assert sub.shape == (13098, 2), f"Expected (13098, 2), got {sub.shape}"
-    assert sub.isnull().sum().sum() == 0, "Submission has NaN values"
+
+    # Step 4: Validate Your Submission format explicitly
+    assert list(sub.columns) == ['id', 'target'], "Wrong columns!"
+    assert len(sub) == 13098, f"Wrong row count: {len(sub)}"
+    assert sub['id'].min() == 133627, "IDs must start at 133627"
+    assert sub['id'].max() == 146778, "IDs must end at 146778"
+    assert sub['target'].notna().all(), "No NaN values allowed!"
+    assert np.isfinite(sub['target']).all(), "No infinite values allowed!"
+
+    print("✅ Validation passed!")
+
+    # Step 5: Save Submission
     sub.to_csv(path, index=False)
     print(f"✅  Submission saved → {path}  ({len(sub)} rows)")
     return sub

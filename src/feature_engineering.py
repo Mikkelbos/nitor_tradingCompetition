@@ -23,6 +23,27 @@ def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_time_dummies(df: pd.DataFrame) -> pd.DataFrame:
+    """Create dummy variables for each hour, day of week, and month based on delivery_start."""
+    df = df.copy()
+    ds = df[DELIVERY_START]
+    
+    # Create categorical series with all possible categories to ensure consistent columns
+    hour_cat = pd.Categorical(ds.dt.hour, categories=range(24))
+    day_cat = pd.Categorical(ds.dt.dayofweek, categories=range(7))
+    month_cat = pd.Categorical(ds.dt.month, categories=range(1, 13))
+    
+    # Create dummies using the categorical variables
+    hour_dummies = pd.get_dummies(hour_cat, prefix="hour", dtype=int)
+    day_dummies = pd.get_dummies(day_cat, prefix="day", dtype=int)
+    month_dummies = pd.get_dummies(month_cat, prefix="month", dtype=int)
+    
+    # Concatenate to the original dataframe
+    df = pd.concat([df, hour_dummies, day_dummies, month_dummies], axis=1)
+    
+    return df
+
+
 # ── Lag features (target) ────────────────────────────────────────────────────
 
 LAG_HOURS = [1, 2, 6, 12, 24, 48, 168]  # up to 1 week
@@ -107,6 +128,46 @@ def add_interaction_features(
     return df
 
 
+# ── Weather lag features ─────────────────────────────────────────────────────
+
+WEATHER_LAGS = [
+    "wind_speed_80m",
+    "wind_speed_10m",
+    "relative_humidity_2m",
+    "global_horizontal_irradiance",
+]
+
+def add_weather_lags(df: pd.DataFrame,
+                     lags: list[int] | None = None,
+                     cols: list[str] | None = None) -> pd.DataFrame:
+    """
+    Create lags for weather/generation conditions.
+    Captures potential stored electricity which will offset demand and push down prices.
+    These features are available in both train and test sets.
+    """
+    if lags is None:
+        lags = LAG_HOURS
+    if cols is None:
+        cols = WEATHER_LAGS
+    df = df.copy().sort_values([MARKET, DELIVERY_START])
+    for c in cols:
+        if c in df.columns:
+            for lag in lags:
+                df[f"{c}_lag_{lag}h"] = df.groupby(MARKET)[c].shift(lag)
+    return df
+
+
+def add_variable_lags(df: pd.DataFrame, variable: str, lags: list[int]) -> pd.DataFrame:
+    """
+    Create lagged features for a specific variable across a list of hours.
+    Lags are computed within each market to prevent data leakage.
+    """
+    df = df.copy().sort_values([MARKET, DELIVERY_START])
+    for lag in lags:
+        df[f"{variable}_lag_{lag}h"] = df.groupby(MARKET)[variable].shift(lag)
+    return df
+
+
 # ── Convenience: apply all engineering steps ─────────────────────────────────
 
 def engineer_features(df: pd.DataFrame,
@@ -125,7 +186,7 @@ def engineer_features(df: pd.DataFrame,
     df = add_temporal_features(df)
     df = add_squared_features(df)
     df = add_interaction_features(df)
-
+    df = add_weather_lags(df)
     if include_lags and TARGET in df.columns:
         df = add_lag_features(df)
     if include_rolling and TARGET in df.columns:

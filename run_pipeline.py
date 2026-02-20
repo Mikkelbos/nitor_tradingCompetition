@@ -27,7 +27,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 from src.data_preprocessing import (
-    load_data, impute_missing, temporal_split, encode_market, scale_features,
+    load_data, impute_missing, encode_market, scale_features,
     NUMERIC_FEATURES, TARGET, MARKET, DELIVERY_START, DELIVERY_END,
 )
 from src.feature_engineering import engineer_features
@@ -82,16 +82,15 @@ print(f"  Train columns after encoding: {len(train_eng.columns)}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4.  TEMPORAL SPLIT
+# 4.  NO SPLIT (USE FULL DATASET)
 # ═══════════════════════════════════════════════════════════════════════════════
 print("\n" + "=" * 70)
-print("STEP 4: Temporal train/validation split (last 3 months → val)")
+print("STEP 4: Using full dataset for training (no split)")
 print("=" * 70)
 
-tr, val = temporal_split(train_eng, val_months=3)
-print(f"  Train: {tr.shape}  |  Val: {val.shape}")
-print(f"  Train dates: {tr[DELIVERY_START].min()} → {tr[DELIVERY_START].max()}")
-print(f"  Val dates:   {val[DELIVERY_START].min()} → {val[DELIVERY_START].max()}")
+tr = train_eng.copy()
+print(f"  Train (Full): {tr.shape}")
+print(f"  Dates: {tr[DELIVERY_START].min()} → {tr[DELIVERY_START].max()}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -110,18 +109,13 @@ all_feature_cols = [c for c in tr.columns if c not in EXCLUDE_COLS]
 test_feature_cols = [c for c in test_eng.columns if c not in EXCLUDE_COLS]
 feature_cols = [c for c in all_feature_cols if c in test_feature_cols]
 
-# Add lag/rolling features that ARE available in train (for SVM val evaluation)
-# but we'll need to handle test prediction separately
-svm_train_features = feature_cols.copy()
-
 # For the SVM model we'll use features available in BOTH train and test
 print(f"  Features available in both train & test: {len(feature_cols)}")
 print(f"  Feature names: {feature_cols}")
 
 # Drop rows with NaN in feature columns (from lag/rolling features)
 tr_clean = tr.dropna(subset=feature_cols).reset_index(drop=True)
-val_clean = val.dropna(subset=feature_cols).reset_index(drop=True)
-print(f"  Train after NaN drop: {tr_clean.shape}  |  Val: {val_clean.shape}")
+print(f"  Train after NaN drop: {tr_clean.shape}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -149,9 +143,7 @@ print("=" * 70)
 
 scaler = StandardScaler()
 X_train = scaler.fit_transform(tr_clean[important_features])
-X_val = scaler.transform(val_clean[important_features])
 y_train = tr_clean[TARGET].values
-y_val = val_clean[TARGET].values
 
 # Also prepare test set
 test_clean = test_eng.copy()
@@ -165,7 +157,7 @@ for col in important_features:
 
 X_test = scaler.transform(test_clean[important_features])
 
-print(f"  X_train: {X_train.shape}  |  X_val: {X_val.shape}  |  X_test: {X_test.shape}")
+print(f"  X_train: {X_train.shape}  |  X_test: {X_test.shape}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -179,20 +171,6 @@ t_start = time.time()
 sgd_model = train_sgd_svr(X_train, y_train, alpha=1e-4, epsilon=0.1, max_iter=3000)
 t_sgd = time.time() - t_start
 print(f"  Training time: {t_sgd:.1f}s")
-
-sgd_pred_train = sgd_model.predict(X_train)
-sgd_pred_val = sgd_model.predict(X_val)
-
-print("\n── SGD SVR Results ──")
-sgd_train_metrics = evaluate(y_train, sgd_pred_train, label="Train")
-sgd_val_metrics = evaluate(y_val, sgd_pred_val, label="Validation")
-
-# Per-market evaluation
-val_eval_df = val_clean.copy()
-val_eval_df["pred"] = sgd_pred_val
-print("\n── Per-Market Validation Results (SGD SVR) ──")
-market_metrics = evaluate_by_market(val_eval_df)
-print(market_metrics.to_string())
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -214,58 +192,7 @@ best_sgd, gs_sgd = tune_sgd_svr(
     verbose=0,
 )
 
-tuned_pred_val = best_sgd.predict(X_val)
-print("\n── Tuned SGD SVR Validation ──")
-tuned_val_metrics = evaluate(y_val, tuned_pred_val, label="Tuned Val")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 9.  TRAIN SVR (RBF, may be slow)
-# ═══════════════════════════════════════════════════════════════════════════════
-print("\n" + "=" * 70)
-print("STEP 9: Training SVR (RBF kernel, full dataset — this may take a while)")
-print("=" * 70)
-
-t_start = time.time()
-svr_model = train_svr(X_train, y_train, kernel="rbf", C=10.0, epsilon=0.1, gamma="scale")
-t_svr = time.time() - t_start
-print(f"  Training time: {t_svr:.1f}s")
-
-svr_pred_val = svr_model.predict(X_val)
-print("\n── SVR (RBF) Validation ──")
-svr_val_metrics = evaluate(y_val, svr_pred_val, label="Validation")
-
-val_eval_df["pred"] = svr_pred_val
-print("\n── Per-Market Validation Results (SVR RBF) ──")
-svr_market_metrics = evaluate_by_market(val_eval_df)
-print(svr_market_metrics.to_string())
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 10. COMPARE & SELECT BEST MODEL
-# ═══════════════════════════════════════════════════════════════════════════════
-print("\n" + "=" * 70)
-print("STEP 10: Model comparison")
-print("=" * 70)
-
-results = pd.DataFrame({
-    "SGD SVR (default)": sgd_val_metrics,
-    "SGD SVR (tuned)": tuned_val_metrics,
-    "SVR (RBF)": svr_val_metrics,
-}).T
-print(results.to_string())
-
-# Pick best model by MAE
-best_name = results["MAE"].idxmin()
-print(f"\n  Best model: {best_name}  (MAE = {results.loc[best_name, 'MAE']:.4f})")
-
-# Select best model for prediction
-if best_name == "SVR (RBF)":
-    best_model = svr_model
-elif best_name == "SGD SVR (tuned)":
-    best_model = best_sgd
-else:
-    best_model = sgd_model
+best_model = best_sgd
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -284,7 +211,7 @@ print(f"  Predictions std:   {test_predictions.std():.2f}")
 
 # Note: electricity prices CAN be negative, so we don't clip the lower bound
 submission = create_submission(test_raw, test_predictions,
-                               path="submissions/svm_submission.csv")
+                             path="submissions/svm_submission.csv")
 
 total_time = time.time() - t0
 print(f"\n{'=' * 70}")
